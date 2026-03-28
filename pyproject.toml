@@ -1,0 +1,54 @@
+[project]
+name = "watchdog"
+version = "0.1.0"
+description = "Self-hosted server monitoring service"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27,<1",
+    "asyncpg>=0.29,<1",
+    "pydantic>=2.6,<3",
+    "icmplib>=3.0,<4",
+    "aiohttp>=3.9,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.1,<10",
+    "pytest-asyncio>=1.3,<2",
+    "respx>=0.21,<1",
+    "ruff>=0.8,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/watchdog"]
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.format]
+quote-style = "single"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "SIM", "ASYNC"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["watchdog"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+disallow_untyped_defs = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+testpaths = ["tests"]

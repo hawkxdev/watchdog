@@ -1,0 +1,73 @@
+# Watchdog configuration example
+# Copy to config.toml and edit for your environment.
+# Secrets must be set via environment variables — never hardcode them here.
+
+# ---------------------------------------------------------------------------
+# General settings (all optional — shown with defaults)
+# ---------------------------------------------------------------------------
+[general]
+# Seconds between checks (can be overridden per monitor)
+check_interval = 60
+# Consecutive failures before DOWN alert
+failure_threshold = 3
+# Consecutive successes before RECOVERY alert
+success_threshold = 2
+# Days to keep check history in the database
+retention_days = 30
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+[database]
+# PostgreSQL DSN. Set WATCHDOG_DATABASE_URL env var.
+dsn = "${WATCHDOG_DATABASE_URL}"
+min_pool_size = 2
+max_pool_size = 10
+
+# ---------------------------------------------------------------------------
+# Telegram alerts
+# ---------------------------------------------------------------------------
+[telegram]
+# Bot token from @BotFather. Set WATCHDOG_TELEGRAM_TOKEN env var.
+bot_token = "${WATCHDOG_TELEGRAM_TOKEN}"
+# Chat or group ID. Set WATCHDOG_TELEGRAM_CHAT_ID env var.
+chat_id = "${WATCHDOG_TELEGRAM_CHAT_ID}"
+enabled = true
+
+# ---------------------------------------------------------------------------
+# Monitors
+# Each [[monitors]] block defines one monitor.
+# Supported types: http, ping, heartbeat
+# ---------------------------------------------------------------------------
+
+# HTTP monitor — checks an endpoint for an expected status code
+[[monitors]]
+id = "production-api"
+name = "Production API"
+type = "http"
+target = "https://api.example.com/health"
+# Override global check_interval (optional)
+interval = 60
+# Expected HTTP status code (default: 200)
+expected_status = 200
+# HTTP request timeout in seconds (default: 10)
+timeout = 10
+
+# Ping monitor — ICMP reachability check (no root required)
+[[monitors]]
+id = "vps-berlin"
+name = "VPS Berlin"
+type = "ping"
+target = "192.168.1.100"
+interval = 30
+
+# Heartbeat monitor — dead man's switch for cron jobs / background workers
+# Your job must POST to: http://<watchdog-host>:8080/<monitor-id>
+# If no ping arrives within check_interval + grace seconds, DOWN alert fires.
+[[monitors]]
+id = "nightly-backup"
+name = "Nightly Backup"
+type = "heartbeat"
+target = "nightly-backup"
+# Expected ping interval in seconds (24 hours)
+interval = 86400
