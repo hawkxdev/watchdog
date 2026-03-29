@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS incidents (
 
 CREATE INDEX IF NOT EXISTS idx_incidents_monitor_created
     ON incidents (monitor_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_checks_created_at
+    ON checks (created_at);
 """
 
 
@@ -113,10 +116,9 @@ async def cleanup_old_checks(pool: asyncpg.Pool, retention_days: int) -> int:
     """Delete expired checks. Returns count."""
     sql = """
         DELETE FROM checks
-        WHERE created_at
-            < NOW() - ($1 || ' days')::INTERVAL
+        WHERE created_at < NOW() - make_interval(days => $1)
     """
-    result = await pool.execute(sql, str(retention_days))
+    result = await pool.execute(sql, retention_days)
     deleted_count = int(result.split()[-1])
     logger.info(
         'Retention cleanup: deleted %d old checks',

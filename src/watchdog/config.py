@@ -5,7 +5,7 @@ import re
 import tomllib
 from typing import Any
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 _ENV_VAR_RE = re.compile(r'\$\{([^}]+)\}')
 
@@ -73,8 +73,8 @@ class TelegramConfig(BaseModel):
 class MonitorConfig(BaseModel):
     """Single monitor definition."""
 
-    id: str
-    name: str
+    id: str = Field(min_length=1, max_length=100, pattern=r'^[a-z0-9_-]+$')
+    name: str = Field(min_length=1, max_length=200)
     type: str
     target: str
     interval: int | None = None
@@ -89,6 +89,14 @@ class MonitorConfig(BaseModel):
             raise ValueError(
                 f'type must be http, ping or heartbeat, got: {v!r}'
             )
+        return v
+
+    @field_validator('timeout', 'interval')
+    @classmethod
+    def _positive_optional(cls, v: int | None, info: Any) -> int | None:
+        """Validate optional positive int."""
+        if v is not None and v <= 0:
+            raise ValueError(f'{info.field_name} must be positive')
         return v
 
 
