@@ -27,24 +27,26 @@ class HttpChecker(Checker):
         """Check HTTP target."""
         start = time.monotonic()
         try:
-            response = await self._client.get(
+            async with self._client.stream(
+                'GET',
                 target,
                 timeout=self._timeout,
                 follow_redirects=self._follow_redirects,
-            )
-            elapsed = (time.monotonic() - start) * 1000
-            success = response.status_code == self._expected_status
-            error = (
-                f'expected {self._expected_status}, got {response.status_code}'
-                if not success
-                else None
-            )
-            return CheckResult(
-                success=success,
-                response_time_ms=elapsed,
-                status_code=response.status_code,
-                error=error,
-            )
+            ) as response:
+                elapsed = (time.monotonic() - start) * 1000
+                success = response.status_code == self._expected_status
+                error = (
+                    f'expected {self._expected_status},'
+                    f' got {response.status_code}'
+                    if not success
+                    else None
+                )
+                return CheckResult(
+                    success=success,
+                    response_time_ms=elapsed,
+                    status_code=response.status_code,
+                    error=error,
+                )
         except (
             httpx.TimeoutException,
             httpx.ConnectError,

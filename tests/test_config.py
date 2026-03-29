@@ -183,7 +183,7 @@ class TestMonitorConfig:
             id='x',
             name='X',
             type='http',
-            target='x',
+            target='https://example.com',
             enabled=False,
         )
         assert cfg.enabled is False

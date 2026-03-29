@@ -1,6 +1,7 @@
 """PostgreSQL storage via asyncpg."""
 
 import logging
+from datetime import datetime
 
 import asyncpg
 
@@ -33,6 +34,11 @@ CREATE INDEX IF NOT EXISTS idx_incidents_monitor_created
 
 CREATE INDEX IF NOT EXISTS idx_checks_created_at
     ON checks (created_at);
+
+CREATE TABLE IF NOT EXISTS heartbeat_pings (
+    monitor_id  VARCHAR(100) PRIMARY KEY,
+    last_ping   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 
@@ -42,12 +48,17 @@ async def create_pool(
     max_size: int = 10,
 ) -> asyncpg.Pool:
     """Create asyncpg connection pool."""
-    pool = await asyncpg.create_pool(
-        dsn,
-        min_size=min_size,
-        max_size=max_size,
-        command_timeout=60,
-    )
+    try:
+        pool = await asyncpg.create_pool(
+            dsn,
+            min_size=min_size,
+            max_size=max_size,
+            command_timeout=60,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f'Database connection failed: {type(exc).__name__}'
+        ) from None
     logger.info(
         'asyncpg pool created (min=%d max=%d)',
         min_size,
@@ -76,16 +87,15 @@ async def insert_check(
     response_time_ms: float | None,
     status_code: int | None,
     error: str | None,
-) -> int:
-    """Insert check result. Returns row id."""
+) -> None:
+    """Insert check result."""
     sql = """
         INSERT INTO checks
             (monitor_id, success, response_time_ms,
              status_code, error)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING id
     """
-    row = await pool.fetchrow(
+    await pool.execute(
         sql,
         monitor_id,
         success,
@@ -93,7 +103,6 @@ async def insert_check(
         status_code,
         error,
     )
-    return row['id']
 
 
 async def insert_incident(
@@ -119,9 +128,41 @@ async def cleanup_old_checks(pool: asyncpg.Pool, retention_days: int) -> int:
         WHERE created_at < NOW() - make_interval(days => $1)
     """
     result = await pool.execute(sql, retention_days)
-    deleted_count = int(result.split()[-1])
+    try:
+        deleted_count = int(result.split()[-1])
+    except (ValueError, IndexError):
+        logger.warning('Could not parse DELETE count: %r', result)
+        deleted_count = 0
     logger.info(
         'Retention cleanup: deleted %d old checks',
         deleted_count,
     )
     return deleted_count
+
+
+async def upsert_heartbeat_ping(
+    pool: asyncpg.Pool,
+    monitor_id: str,
+) -> None:
+    """Record heartbeat ping timestamp."""
+    sql = """
+        INSERT INTO heartbeat_pings (monitor_id, last_ping)
+        VALUES ($1, NOW())
+        ON CONFLICT (monitor_id)
+        DO UPDATE SET last_ping = NOW()
+    """
+    await pool.execute(sql, monitor_id)
+
+
+async def get_last_heartbeat_ping(
+    pool: asyncpg.Pool,
+    monitor_id: str,
+) -> datetime | None:
+    """Get last heartbeat ping time."""
+    sql = """
+        SELECT last_ping FROM heartbeat_pings WHERE monitor_id = $1
+    """
+    row = await pool.fetchrow(sql, monitor_id)
+    if row is None:
+        return None
+    return row['last_ping']

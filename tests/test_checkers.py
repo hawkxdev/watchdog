@@ -1,5 +1,6 @@
 """Checker tests."""
 
+from dataclasses import FrozenInstanceError
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -40,7 +41,7 @@ class TestCheckResult:
 
     def test_frozen(self) -> None:
         r = CheckResult(success=True, response_time_ms=1.0)
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             r.success = False  # type: ignore[misc]
 
     def test_defaults(self) -> None:

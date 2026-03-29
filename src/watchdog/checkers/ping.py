@@ -41,3 +41,8 @@ class PingChecker(Checker):
                 success=False,
                 error=str(exc),
             )
+        except Exception as exc:
+            return CheckResult(
+                success=False,
+                error=f'{type(exc).__name__}: {exc}',
+            )

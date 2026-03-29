@@ -5,7 +5,7 @@ import re
 import tomllib
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _ENV_VAR_RE = re.compile(r'\$\{([^}]+)\}')
 
@@ -40,6 +40,7 @@ class GeneralConfig(BaseModel):
     failure_threshold: int = 3
     success_threshold: int = 2
     retention_days: int = 30
+    heartbeat_port: int = Field(default=8080, ge=1, le=65535)
 
     @field_validator(
         'check_interval',
@@ -98,6 +99,17 @@ class MonitorConfig(BaseModel):
         if v is not None and v <= 0:
             raise ValueError(f'{info.field_name} must be positive')
         return v
+
+    @model_validator(mode='after')
+    def _validate_target(self) -> 'MonitorConfig':
+        """Validate target per monitor type."""
+        if self.type == 'http' and not self.target.startswith(
+            ('http://', 'https://')
+        ):
+            raise ValueError(
+                'http monitor target must start with http:// or https://'
+            )
+        return self
 
 
 class AppConfig(BaseModel):
