@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import asyncpg
 import httpx
@@ -11,26 +13,34 @@ from watchdog.checkers.base import Checker, CheckResult
 from watchdog.checkers.heartbeat import HeartbeatChecker
 from watchdog.checkers.http import HttpChecker
 from watchdog.checkers.ping import PingChecker
-from watchdog.config import AppConfig, MonitorConfig
+from watchdog.config import AppConfig, GeneralConfig, MonitorConfig
 from watchdog.state import MonitorState, evaluate_check
+
+if TYPE_CHECKING:
+    from watchdog.notifications import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
 
+def _calc_downtime(state: MonitorState) -> float:
+    """Compute downtime seconds for recovery transition."""
+    if state.last_status_change is None:
+        return 0.0
+    return (datetime.now(UTC) - state.last_status_change).total_seconds()
+
+
 async def monitor_loop(
-    monitor_id: str,
     checker: Checker,
     config: MonitorConfig,
     state: MonitorState,
     pool: asyncpg.Pool,
-    failure_threshold: int,
-    success_threshold: int,
+    general: GeneralConfig,
     shutdown: asyncio.Event,
-    default_interval: int = 60,
+    notifier: 'TelegramNotifier | None' = None,
 ) -> None:
     """Run single monitor check loop."""
-    interval = config.interval or default_interval
-    check_timeout = config.timeout or default_interval
+    interval = config.interval or general.check_interval
+    check_timeout = config.timeout or 10
     while not shutdown.is_set():
         try:
             async with asyncio.timeout(check_timeout):
@@ -39,7 +49,7 @@ async def monitor_loop(
             result = CheckResult(success=False, error='check timed out')
         await storage.insert_check(
             pool,
-            monitor_id,
+            config.id,
             result.success,
             result.response_time_ms,
             result.status_code,
@@ -47,24 +57,33 @@ async def monitor_loop(
         )
         transition = evaluate_check(
             state,
-            monitor_id,
+            config.id,
             result,
-            failure_threshold,
-            success_threshold,
+            general.failure_threshold,
+            general.success_threshold,
         )
         if transition:
             await storage.insert_incident(
                 pool,
-                monitor_id,
+                config.id,
                 transition.to_status,
                 f'{transition.from_status} -> {transition.to_status}',
             )
             logger.info(
                 'Monitor %s: %s -> %s',
-                monitor_id,
+                config.id,
                 transition.from_status,
                 transition.to_status,
             )
+            if notifier:
+                await notifier.send_alert(
+                    transition=transition,
+                    monitor_name=config.name,
+                    target=config.target,
+                    error=result.error,
+                    failed_checks=state.consecutive_failures,
+                    downtime_seconds=_calc_downtime(state),
+                )
         try:
             async with asyncio.timeout(interval):
                 await shutdown.wait()
@@ -105,11 +124,33 @@ def create_monitors(
     return result
 
 
+async def retention_cleanup_loop(
+    pool: asyncpg.Pool,
+    retention_days: int,
+    shutdown: asyncio.Event,
+    interval_hours: int = 24,
+) -> None:
+    """Periodic retention cleanup."""
+    await storage.cleanup_old_checks(pool, retention_days)
+    await storage.cleanup_old_incidents(pool, retention_days)
+    interval = interval_hours * 3600
+    while not shutdown.is_set():
+        try:
+            async with asyncio.timeout(interval):
+                await shutdown.wait()
+                return
+        except TimeoutError:
+            pass
+        await storage.cleanup_old_checks(pool, retention_days)
+        await storage.cleanup_old_incidents(pool, retention_days)
+
+
 async def run_all(
     config: AppConfig,
     pool: asyncpg.Pool,
     http_client: httpx.AsyncClient,
     shutdown: asyncio.Event,
+    notifier: 'TelegramNotifier | None' = None,
 ) -> None:
     """Run all monitors in TaskGroup."""
     monitors = create_monitors(config, pool, http_client)
@@ -117,15 +158,21 @@ async def run_all(
         for mc, checker, state in monitors:
             tg.create_task(
                 monitor_loop(
-                    mc.id,
                     checker,
                     mc,
                     state,
                     pool,
-                    config.general.failure_threshold,
-                    config.general.success_threshold,
+                    config.general,
                     shutdown,
-                    default_interval=config.general.check_interval,
+                    notifier=notifier,
                 ),
                 name=f'monitor-{mc.id}',
             )
+        tg.create_task(
+            retention_cleanup_loop(
+                pool,
+                config.general.retention_days,
+                shutdown,
+            ),
+            name='retention',
+        )

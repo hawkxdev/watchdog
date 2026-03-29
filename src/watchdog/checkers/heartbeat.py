@@ -1,8 +1,8 @@
 """Heartbeat checker and receiver."""
 
 import logging
-import re
 from datetime import UTC, datetime, timedelta
+from re import compile as re_compile
 
 import aiohttp.web
 import asyncpg
@@ -10,6 +10,7 @@ import asyncpg.exceptions
 
 from watchdog import storage
 from watchdog.checkers.base import Checker, CheckResult
+from watchdog.config import MONITOR_ID_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class HeartbeatChecker(Checker):
         )
 
 
-_MONITOR_ID_RE = re.compile(r'^[a-z0-9_-]{1,100}$')
+_MONITOR_ID_RE = re_compile(MONITOR_ID_PATTERN)
 
 
 async def _handle_ping(request: aiohttp.web.Request) -> aiohttp.web.Response:
@@ -87,7 +88,7 @@ async def create_heartbeat_app(
     known_ids: set[str] | None = None,
 ) -> aiohttp.web.Application:
     """Create aiohttp app for heartbeat receiver."""
-    app = aiohttp.web.Application()
+    app = aiohttp.web.Application(client_max_size=1024)
     app[_POOL_KEY] = pool
     app[_KNOWN_IDS_KEY] = known_ids or set()
     app.router.add_post('/{monitor_id}', _handle_ping)

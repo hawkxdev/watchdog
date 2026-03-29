@@ -171,7 +171,9 @@ class TestMonitorLoop:
             ),
         ):
             task = asyncio.create_task(
-                monitor_loop(mc.id, checker, mc, state, pool, 3, 2, shutdown)
+                monitor_loop(
+                    checker, mc, state, pool, GeneralConfig(), shutdown
+                )
             )
             await asyncio.sleep(0)
             shutdown.set()
@@ -200,7 +202,9 @@ class TestMonitorLoop:
             ),
         ):
             task = asyncio.create_task(
-                monitor_loop(mc.id, checker, mc, state, pool, 3, 2, shutdown)
+                monitor_loop(
+                    checker, mc, state, pool, GeneralConfig(), shutdown
+                )
             )
             await asyncio.sleep(0)
             shutdown.set()
@@ -231,7 +235,14 @@ class TestMonitorLoop:
             ),
         ):
             task = asyncio.create_task(
-                monitor_loop(mc.id, checker, mc, state, pool, 1, 2, shutdown)
+                monitor_loop(
+                    checker,
+                    mc,
+                    state,
+                    pool,
+                    GeneralConfig(failure_threshold=1),
+                    shutdown,
+                )
             )
             await asyncio.sleep(0)
             shutdown.set()
@@ -257,7 +268,9 @@ class TestMonitorLoop:
                 new=AsyncMock(),
             ),
         ):
-            await monitor_loop(mc.id, checker, mc, state, pool, 3, 2, shutdown)
+            await monitor_loop(
+                checker, mc, state, pool, GeneralConfig(), shutdown
+            )
 
         checker.check.assert_not_awaited()
 
@@ -279,7 +292,9 @@ class TestMonitorLoop:
             ),
         ):
             task = asyncio.create_task(
-                monitor_loop(mc.id, checker, mc, state, pool, 3, 2, shutdown)
+                monitor_loop(
+                    checker, mc, state, pool, GeneralConfig(), shutdown
+                )
             )
             await asyncio.sleep(25)
             shutdown.set()
@@ -309,15 +324,12 @@ class TestMonitorLoop:
         ):
             task = asyncio.create_task(
                 monitor_loop(
-                    mc.id,
                     checker,
                     mc,
                     state,
                     pool,
-                    3,
-                    2,
+                    GeneralConfig(check_interval=60),
                     shutdown,
-                    default_interval=60,
                 )
             )
             await asyncio.sleep(0)
@@ -342,11 +354,135 @@ class TestRunAll:
         invoked_ids: list[str] = []
 
         async def fake_monitor_loop(
-            monitor_id: str, *args: object, **kwargs: object
+            checker: object,
+            config: object,
+            *args: object,
+            **kwargs: object,
         ) -> None:
-            invoked_ids.append(monitor_id)
+            invoked_ids.append(config.id)
 
-        with patch('watchdog.scheduler.monitor_loop', new=fake_monitor_loop):
+        async def fake_retention(*a: object, **kw: object) -> None:
+            pass
+
+        with (
+            patch('watchdog.scheduler.monitor_loop', new=fake_monitor_loop),
+            patch(
+                'watchdog.scheduler.retention_cleanup_loop',
+                new=fake_retention,
+            ),
+        ):
             await run_all(config, pool, client, shutdown)
 
         assert sorted(invoked_ids) == ['http-1', 'ping-1']
+
+
+class TestMonitorLoopNotifier:
+    @pytest.mark.looptime
+    async def test_notifier_called_on_down_transition(self) -> None:
+        checker = AsyncMock()
+        checker.check.return_value = CheckResult(
+            success=False, error='timeout'
+        )
+        mc = _http_monitor(interval=10)
+        state = MonitorState(status='UP')
+        pool = AsyncMock()
+        shutdown = asyncio.Event()
+        mock_notifier = AsyncMock()
+        mock_notifier.send_alert.return_value = True
+
+        with (
+            patch('watchdog.scheduler.storage.insert_check', new=AsyncMock()),
+            patch(
+                'watchdog.scheduler.storage.insert_incident',
+                new=AsyncMock(),
+            ),
+        ):
+            task = asyncio.create_task(
+                monitor_loop(
+                    checker,
+                    mc,
+                    state,
+                    pool,
+                    GeneralConfig(failure_threshold=1),
+                    shutdown,
+                    notifier=mock_notifier,
+                )
+            )
+            await asyncio.sleep(0)
+            shutdown.set()
+            await asyncio.sleep(11)
+            await task
+
+        mock_notifier.send_alert.assert_awaited_once()
+        call_kwargs = mock_notifier.send_alert.call_args[1]
+        assert call_kwargs['transition'].to_status == 'DOWN'
+        assert call_kwargs['monitor_name'] == mc.name
+        assert call_kwargs['target'] == mc.target
+
+    @pytest.mark.looptime
+    async def test_notifier_not_called_without_transition(self) -> None:
+        checker = AsyncMock()
+        checker.check.return_value = CheckResult(success=True)
+        mc = _http_monitor(interval=10)
+        state = MonitorState(status='UP')
+        pool = AsyncMock()
+        shutdown = asyncio.Event()
+        mock_notifier = AsyncMock()
+
+        with (
+            patch('watchdog.scheduler.storage.insert_check', new=AsyncMock()),
+            patch(
+                'watchdog.scheduler.storage.insert_incident',
+                new=AsyncMock(),
+            ),
+        ):
+            task = asyncio.create_task(
+                monitor_loop(
+                    checker,
+                    mc,
+                    state,
+                    pool,
+                    GeneralConfig(),
+                    shutdown,
+                    notifier=mock_notifier,
+                )
+            )
+            await asyncio.sleep(0)
+            shutdown.set()
+            await asyncio.sleep(11)
+            await task
+
+        mock_notifier.send_alert.assert_not_awaited()
+
+    @pytest.mark.looptime
+    async def test_no_notifier_no_error_on_transition(self) -> None:
+        checker = AsyncMock()
+        checker.check.return_value = CheckResult(
+            success=False, error='timeout'
+        )
+        mc = _http_monitor(interval=10)
+        state = MonitorState(status='UP')
+        pool = AsyncMock()
+        shutdown = asyncio.Event()
+
+        with (
+            patch('watchdog.scheduler.storage.insert_check', new=AsyncMock()),
+            patch(
+                'watchdog.scheduler.storage.insert_incident',
+                new=AsyncMock(),
+            ),
+        ):
+            task = asyncio.create_task(
+                monitor_loop(
+                    checker,
+                    mc,
+                    state,
+                    pool,
+                    GeneralConfig(failure_threshold=1),
+                    shutdown,
+                )
+            )
+            await asyncio.sleep(0)
+            shutdown.set()
+            await asyncio.sleep(11)
+            await task

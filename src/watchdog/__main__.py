@@ -13,6 +13,7 @@ import httpx
 from watchdog import storage
 from watchdog.checkers.heartbeat import create_heartbeat_app
 from watchdog.config import load_config
+from watchdog.notifications import TelegramNotifier
 from watchdog.scheduler import run_all
 
 logger = logging.getLogger(__name__)
@@ -59,11 +60,12 @@ async def main() -> None:
             httpx.AsyncClient(max_redirects=5)
         )
 
-        heartbeat_monitors = [
-            m for m in config.monitors if m.type == 'heartbeat' and m.enabled
-        ]
-        if heartbeat_monitors:
-            hb_ids = {m.id for m in heartbeat_monitors}
+        hb_ids = {
+            m.id
+            for m in config.monitors
+            if m.type == 'heartbeat' and m.enabled
+        }
+        if hb_ids:
             app = await create_heartbeat_app(pool, known_ids=hb_ids)
             await stack.enter_async_context(
                 _heartbeat_server(
@@ -71,7 +73,17 @@ async def main() -> None:
                 )
             )
 
-        await run_all(config, pool, http_client, shutdown)
+        notifier = (
+            TelegramNotifier(
+                bot_token=config.telegram.bot_token,
+                chat_id=config.telegram.chat_id,
+                http_client=http_client,
+            )
+            if config.telegram.enabled
+            else None
+        )
+
+        await run_all(config, pool, http_client, shutdown, notifier=notifier)
 
 
 if __name__ == '__main__':

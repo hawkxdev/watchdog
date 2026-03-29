@@ -37,6 +37,7 @@ class TestMainLifecycle:
             pool: object,
             client: object,
             shutdown: asyncio.Event,
+            **kwargs: object,
         ) -> None:
             shutdown.set()
 
@@ -76,6 +77,7 @@ class TestMainLifecycle:
             pool: object,
             client: object,
             shutdown: asyncio.Event,
+            **kwargs: object,
         ) -> None:
             shutdown.set()
 
@@ -91,6 +93,7 @@ class TestMainLifecycle:
         hb_monitor.id = 'hb-1'
 
         mock_app = MagicMock()
+
         with (
             patch(
                 'watchdog.__main__.load_config',

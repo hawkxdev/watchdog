@@ -2,8 +2,11 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
 from watchdog.checkers.base import CheckResult
+
+Status = Literal['UNKNOWN', 'UP', 'DOWN']
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,8 +14,8 @@ class Transition:
     """State change event."""
 
     monitor_id: str
-    from_status: str
-    to_status: str
+    from_status: Status
+    to_status: Status
     timestamp: datetime
 
 
@@ -20,7 +23,7 @@ class Transition:
 class MonitorState:
     """Per-monitor state tracker."""
 
-    status: str = 'UNKNOWN'
+    status: Status = 'UNKNOWN'
     consecutive_failures: int = 0
     consecutive_successes: int = 0
     last_check_time: datetime | None = None
@@ -68,12 +71,12 @@ def evaluate_check(
 
 
 def _next_status(
-    current: str,
+    current: Status,
     failures: int,
     successes: int,
     failure_threshold: int,
     success_threshold: int,
-) -> str:
+) -> Status:
     """Compute next status."""
     if current in ('UNKNOWN', 'UP') and failures >= failure_threshold:
         return 'DOWN'

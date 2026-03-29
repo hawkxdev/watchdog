@@ -1,11 +1,14 @@
 """TOML config loading and validation."""
 
 import os
+import pathlib
 import re
 import tomllib
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+MONITOR_ID_PATTERN = r'^[a-z0-9_-]{1,100}$'
 
 _ENV_VAR_RE = re.compile(r'\$\{([^}]+)\}')
 
@@ -74,23 +77,14 @@ class TelegramConfig(BaseModel):
 class MonitorConfig(BaseModel):
     """Single monitor definition."""
 
-    id: str = Field(min_length=1, max_length=100, pattern=r'^[a-z0-9_-]+$')
+    id: str = Field(pattern=MONITOR_ID_PATTERN)
     name: str = Field(min_length=1, max_length=200)
-    type: str
+    type: Literal['http', 'ping', 'heartbeat']
     target: str
     interval: int | None = None
     enabled: bool = True
     expected_status: int | None = 200
     timeout: int | None = 10
-
-    @field_validator('type')
-    @classmethod
-    def _valid_type(cls, v: str) -> str:
-        if v not in ('http', 'ping', 'heartbeat'):
-            raise ValueError(
-                f'type must be http, ping or heartbeat, got: {v!r}'
-            )
-        return v
 
     @field_validator('timeout', 'interval')
     @classmethod
@@ -98,6 +92,10 @@ class MonitorConfig(BaseModel):
         """Validate optional positive int."""
         if v is not None and v <= 0:
             raise ValueError(f'{info.field_name} must be positive')
+        limits = {'timeout': 300, 'interval': 86400}
+        limit = limits.get(info.field_name)
+        if v is not None and limit and v > limit:
+            raise ValueError(f'{info.field_name} must be <= {limit}')
         return v
 
     @model_validator(mode='after')
@@ -123,8 +121,6 @@ class AppConfig(BaseModel):
 
 def load_config(path: str) -> AppConfig:
     """Load and validate TOML config."""
-    import pathlib
-
     p = pathlib.Path(path)
     if not p.exists():
         raise FileNotFoundError(f'Config file not found: {path}')

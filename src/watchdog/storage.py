@@ -110,15 +110,13 @@ async def insert_incident(
     monitor_id: str,
     status: str,
     message: str,
-) -> int:
+) -> None:
     """Insert state transition incident."""
     sql = """
         INSERT INTO incidents (monitor_id, status, message)
         VALUES ($1, $2, $3)
-        RETURNING id
     """
-    row = await pool.fetchrow(sql, monitor_id, status, message)
-    return row['id']
+    await pool.execute(sql, monitor_id, status, message)
 
 
 async def cleanup_old_checks(pool: asyncpg.Pool, retention_days: int) -> int:
@@ -137,6 +135,27 @@ async def cleanup_old_checks(pool: asyncpg.Pool, retention_days: int) -> int:
         'Retention cleanup: deleted %d old checks',
         deleted_count,
     )
+    return deleted_count
+
+
+async def cleanup_old_incidents(
+    pool: asyncpg.Pool, retention_days: int
+) -> int:
+    """Delete expired incidents. Returns count."""
+    sql = """
+        DELETE FROM incidents
+        WHERE created_at < NOW() - make_interval(days => $1)
+    """
+    result = await pool.execute(sql, retention_days)
+    try:
+        deleted_count = int(result.split()[-1])
+    except (ValueError, IndexError):
+        deleted_count = 0
+    if deleted_count:
+        logger.info(
+            'Retention cleanup: deleted %d old incidents',
+            deleted_count,
+        )
     return deleted_count
 
 
@@ -165,4 +184,5 @@ async def get_last_heartbeat_ping(
     row = await pool.fetchrow(sql, monitor_id)
     if row is None:
         return None
-    return row['last_ping']
+    result: datetime = row['last_ping']
+    return result
