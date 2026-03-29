@@ -7,7 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from watchdog.__main__ import _sd_notify
 from watchdog.config import GeneralConfig, MonitorConfig
+
+
+class TestSdNotify:
+    def test_noop_without_notify_socket(self) -> None:
+        with patch.dict('os.environ', {}, clear=True):
+            _sd_notify('READY=1')
+
+    def test_noop_when_notify_socket_empty(self) -> None:
+        with patch.dict('os.environ', {'NOTIFY_SOCKET': ''}):
+            _sd_notify('READY=1')
 
 
 class TestGeneralConfigHeartbeatPort:

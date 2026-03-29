@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -145,12 +146,32 @@ async def retention_cleanup_loop(
         await storage.cleanup_old_incidents(pool, retention_days)
 
 
+async def _tick_loop(
+    callback: Callable[[], None],
+    shutdown: asyncio.Event,
+    interval: int = 30,
+) -> None:
+    """Periodically call callback until shutdown."""
+    while not shutdown.is_set():
+        try:
+            callback()
+        except Exception:
+            logger.warning('on_tick callback failed', exc_info=True)
+        try:
+            async with asyncio.timeout(interval):
+                await shutdown.wait()
+                return
+        except TimeoutError:
+            continue
+
+
 async def run_all(
     config: AppConfig,
     pool: asyncpg.Pool,
     http_client: httpx.AsyncClient,
     shutdown: asyncio.Event,
     notifier: 'TelegramNotifier | None' = None,
+    on_tick: Callable[[], None] | None = None,
 ) -> None:
     """Run all monitors in TaskGroup."""
     monitors = create_monitors(config, pool, http_client)
@@ -176,3 +197,8 @@ async def run_all(
             ),
             name='retention',
         )
+        if on_tick:
+            tg.create_task(
+                _tick_loop(on_tick, shutdown),
+                name='sd-notify',
+            )

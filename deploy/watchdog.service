@@ -1,0 +1,30 @@
+[Unit]
+Description=Watchdog Server Monitoring Service
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+WorkingDirectory=/opt/watchdog
+ExecStart=/opt/watchdog/.venv/bin/python -m watchdog
+EnvironmentFile=/etc/watchdog/.env
+
+Restart=on-failure
+RestartSec=10
+WatchdogSec=60
+
+User=watchdog
+Group=watchdog
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/opt/watchdog
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=watchdog
+
+[Install]
+WantedBy=multi-user.target

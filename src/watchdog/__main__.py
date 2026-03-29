@@ -1,11 +1,14 @@
 """Application entry point."""
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
+import socket
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
+from functools import partial
 
 import aiohttp.web
 import httpx
@@ -17,6 +20,29 @@ from watchdog.notifications import TelegramNotifier
 from watchdog.scheduler import run_all
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_notify_socket() -> tuple[socket.socket, str] | None:
+    """Resolve systemd NOTIFY_SOCKET once at import."""
+    addr = os.environ.get('NOTIFY_SOCKET')
+    if not addr:
+        return None
+    if addr[0] == '@':
+        addr = '\0' + addr[1:]
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    sock.setblocking(False)
+    return sock, addr
+
+
+_SD_SOCKET = _resolve_notify_socket()
+
+
+def _sd_notify(state: str) -> None:
+    """Send notification to systemd."""
+    if _SD_SOCKET is None:
+        return
+    sock, addr = _SD_SOCKET
+    sock.sendto(state.encode(), addr)
 
 
 @asynccontextmanager
@@ -43,9 +69,15 @@ async def main() -> None:
     config = load_config(os.environ.get('CONFIG_PATH', 'config.toml'))
 
     shutdown = asyncio.Event()
+
+    def _handle_signal() -> None:
+        with contextlib.suppress(OSError):
+            _sd_notify('STOPPING=1')
+        shutdown.set()
+
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, shutdown.set)
+        loop.add_signal_handler(sig, _handle_signal)
 
     async with AsyncExitStack() as stack:
         pool = await storage.create_pool(
@@ -83,7 +115,15 @@ async def main() -> None:
             else None
         )
 
-        await run_all(config, pool, http_client, shutdown, notifier=notifier)
+        _sd_notify('READY=1')
+        await run_all(
+            config,
+            pool,
+            http_client,
+            shutdown,
+            notifier=notifier,
+            on_tick=partial(_sd_notify, 'WATCHDOG=1'),
+        )
 
 
 if __name__ == '__main__':

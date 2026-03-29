@@ -17,7 +17,12 @@ from watchdog.config import (
     MonitorConfig,
     TelegramConfig,
 )
-from watchdog.scheduler import create_monitors, monitor_loop, run_all
+from watchdog.scheduler import (
+    _tick_loop,
+    create_monitors,
+    monitor_loop,
+    run_all,
+)
 from watchdog.state import MonitorState
 
 
@@ -374,6 +379,33 @@ class TestRunAll:
             await run_all(config, pool, client, shutdown)
 
         assert sorted(invoked_ids) == ['http-1', 'ping-1']
+
+
+class TestTickLoop:
+    @pytest.mark.looptime
+    async def test_calls_callback_periodically(self) -> None:
+        calls: list[str] = []
+        shutdown = asyncio.Event()
+
+        async def stop_after() -> None:
+            await asyncio.sleep(65)
+            shutdown.set()
+
+        task = asyncio.create_task(
+            _tick_loop(lambda: calls.append('tick'), shutdown, interval=30)
+        )
+        stopper = asyncio.create_task(stop_after())
+        await task
+        stopper.cancel()
+        assert len(calls) == 3
+
+    @pytest.mark.looptime
+    async def test_stops_on_shutdown(self) -> None:
+        calls: list[str] = []
+        shutdown = asyncio.Event()
+        shutdown.set()
+        await _tick_loop(lambda: calls.append('tick'), shutdown, interval=30)
+        assert len(calls) == 0
 
 
 class TestMonitorLoopNotifier:
